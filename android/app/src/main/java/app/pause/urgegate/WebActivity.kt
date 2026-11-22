@@ -219,6 +219,34 @@ abstract class WebActivity : ComponentActivity() {
         fun canListen(): Boolean = SpeechRecognizer.isRecognitionAvailable(this@WebActivity)
 
         @JavascriptInterface
+        fun listApps(): String {
+            val pm = packageManager
+            val main = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+            val arr = org.json.JSONArray()
+            pm.queryIntentActivities(main, 0)
+                .map { it.activityInfo.packageName to it.loadLabel(pm).toString() }
+                .filter { it.first != packageName }
+                .distinctBy { it.first }
+                .sortedBy { it.second.lowercase() }
+                .forEach { (pkg, label) -> arr.put(JSONObject().put("pkg", pkg).put("label", label)) }
+            return arr.toString()
+        }
+
+        @JavascriptInterface
+        fun openApp(pkg: String) {
+            runOnUiThread {
+                val i = packageManager.getLaunchIntentForPackage(pkg)
+                if (i != null) {
+                    try {
+                        startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    } catch (e: Exception) {
+                        // ignore
+                    }
+                }
+            }
+        }
+
+        @JavascriptInterface
         fun listen() {
             runOnUiThread { startListening() }
         }

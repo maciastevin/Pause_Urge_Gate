@@ -6,7 +6,18 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.PixelFormat
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
+import android.util.TypedValue
+import android.view.Gravity
+import android.view.View
+import android.view.WindowManager
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import org.json.JSONObject
@@ -24,6 +35,19 @@ class UrgeWatchService : AccessibilityService() {
     private var lastKey = ""
     private var lastAt = 0L
     private var lastGate = 0L
+    private var blocker: View? = null
+    private val handler = Handler(Looper.getMainLooper())
+    private val blockerCheck = object : Runnable {
+        override fun run() {
+            if (blocker == null) return
+            val active = state?.optJSONObject("activePause")
+            if (active == null || active.optDouble("endsAt", 0.0) <= System.currentTimeMillis().toDouble()) {
+                hideBlocker()
+            } else {
+                handler.postDelayed(this, 2000)
+            }
+        }
+    }
 
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == null || key == PauseStore.KEY) reload()
@@ -44,6 +68,7 @@ class UrgeWatchService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        hideBlocker()
         PauseStore.prefs(this).unregisterOnSharedPreferenceChangeListener(prefsListener)
         super.onDestroy()
     }
@@ -52,29 +77,55 @@ class UrgeWatchService : AccessibilityService() {
 
     private fun reload() {
         state = PauseStore.parsed(this)
+        val active = state?.optJSONObject("activePause")
+        if (active == null) hideBlocker()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val e = event ?: return
         val pkg = e.packageName?.toString() ?: return
-        if (pkg == packageName) return
         val now = System.currentTimeMillis()
+        val stateChange = e.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
 
-        // 1) A pause is running: keep it on screen.
+        // 1) A pause is running: cover everything except Pause itself and the phone.
         val active = state?.optJSONObject("activePause")
         if (active != null && active.optDouble("endsAt", 0.0) > now.toDouble()) {
-            if (e.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-                now - lastGate > 1500 &&
-                pkg !in ALLOWED_DURING_PAUSE &&
-                pkg !in launchers &&
-                isLaunchableApp(pkg)
-            ) {
-                launchGate(active.optString("target", ""), active.optString("hit", ""))
+            if (!stateChange) return
+            if (pkg == packageName) {
+                val cls = e.className?.toString() ?: ""
+                if (cls.endsWith("GateActivity") || cls.endsWith("MainActivity")) hideBlocker()
+                return
+            }
+            if (pkg in ALLOWED_DURING_PAUSE) {
+                if (pkg in PHONE_APPS) hideBlocker()
+                return
+            }
+            if (pkg in launchers || isLaunchableApp(pkg)) {
+                showBlocker()
+                if (now - lastGate > 1500) {
+                    launchGate(active.optString("target", ""), active.optString("hit", ""))
+                }
+            }
+            return
+        }
+        if (pkg == packageName) return
+
+        // 2) A watched app was opened.
+        if (stateChange && pkg in PauseCore.watchApps(state)) {
+            val hit = "app:$pkg"
+            if (!PauseCore.hasPass(state, hit, now)) {
+                val key = "app|$pkg"
+                if (key != lastKey || now - lastAt > 4000) {
+                    lastKey = key
+                    lastAt = now
+                    performGlobalAction(GLOBAL_ACTION_HOME)
+                    launchGate(hit, hit)
+                }
             }
             return
         }
 
-        // 2) Watch browsers' address bars.
+        // 3) Watch browsers' address bars.
         val ids = BROWSER_URL_IDS[pkg] ?: return
         val root = rootInActiveWindow ?: return
         val text = readUrl(root, ids)?.trim() ?: return
@@ -119,6 +170,68 @@ class UrgeWatchService : AccessibilityService() {
             if (found != null) return found
         }
         return null
+    }
+
+    /** Full-screen cover drawn above every app while a pause runs. */
+    private fun showBlocker() {
+        if (blocker != null) return
+        val wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        val dp = { v: Float -> TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, resources.displayMetrics).toInt() }
+
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        box.gravity = Gravity.CENTER
+        box.setBackgroundColor(Color.parseColor("#F717142A"))
+        box.setPadding(dp(32f), dp(32f), dp(32f), dp(32f))
+
+        val title = TextView(this)
+        title.text = "Pause is still running"
+        title.setTextColor(Color.WHITE)
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
+        title.gravity = Gravity.CENTER
+        box.addView(title)
+
+        val body = TextView(this)
+        body.text = "The rest of your phone is on hold until the timer ends. You've got this."
+        body.setTextColor(Color.parseColor("#A49EC4"))
+        body.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+        body.gravity = Gravity.CENTER
+        body.setPadding(0, dp(12f), 0, dp(24f))
+        box.addView(body)
+
+        val back = Button(this)
+        back.text = "Back to my pause"
+        back.setOnClickListener {
+            val active = state?.optJSONObject("activePause")
+            launchGate(active?.optString("target", "") ?: "", active?.optString("hit", "") ?: "")
+        }
+        box.addView(back)
+
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT,
+        )
+        try {
+            wm.addView(box, lp)
+            blocker = box
+            handler.postDelayed(blockerCheck, 2000)
+        } catch (e: Exception) {
+            blocker = null
+        }
+    }
+
+    private fun hideBlocker() {
+        val v = blocker ?: return
+        blocker = null
+        handler.removeCallbacks(blockerCheck)
+        try {
+            (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(v)
+        } catch (e: Exception) {
+            // already gone
+        }
     }
 
     private fun isLaunchableApp(pkg: String): Boolean =
@@ -173,12 +286,20 @@ class UrgeWatchService : AccessibilityService() {
             "com.duckduckgo.mobile.android" to listOf("com.duckduckgo.mobile.android:id/omnibarTextInput"),
         )
 
-        /** Apps a running pause never blocks: system UI, phone, settings, keyboards. */
+        /** Phone/emergency apps: the pause cover steps aside for these. */
+        val PHONE_APPS = setOf(
+            "com.android.dialer",
+            "com.google.android.dialer",
+            "com.samsung.android.dialer",
+            "com.samsung.android.incallui",
+            "com.android.server.telecom",
+            "com.android.phone",
+        )
+
+        /** Apps a running pause never blocks: system UI, phone, keyboards. */
         val ALLOWED_DURING_PAUSE = setOf(
             "android",
             "com.android.systemui",
-            "com.android.settings",
-            "com.samsung.android.settings",
             "com.android.dialer",
             "com.google.android.dialer",
             "com.samsung.android.dialer",

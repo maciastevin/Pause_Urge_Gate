@@ -27,6 +27,8 @@
         practice: mac && N.practice ? () => N.practice() : null,
         openHome: mac && N.openHome ? () => N.openHome() : null,
         onChange: mac ? (fn) => { window.__pauseOnChange = fn; } : null,
+        listApps: N.listApps ? () => { try { return JSON.parse(N.listApps() || "[]"); } catch (e) { return []; } } : null,
+        openApp: N.openApp ? (pkg) => { N.openApp(pkg); N.close(); } : null,
       };
     }
     const ch = typeof chrome !== "undefined" ? chrome : null;
@@ -105,6 +107,15 @@
     return t.length ? t.filter((w) => s.has(w)).length / t.length : 0;
   };
   const params = new URLSearchParams(location.search);
+  const isApp = (hit) => String(hit || "").indexOf("app:") === 0;
+  function targetName(ap) {
+    if (isApp(ap.hit)) {
+      const pkg = ap.hit.slice(4);
+      const a = (state.watchApps || []).find((x) => x.pkg === pkg);
+      return a ? a.label : pkg;
+    }
+    return C.parseUrl(ap.target).host || ap.hit;
+  }
 
   /* --------------------------------- state -------------------------------- */
 
@@ -190,6 +201,16 @@
         </form>
         <div class="chips">${state.watch.map((w, i) => `<span class="chip">${esc(w)}<button aria-label="Remove ${esc(w)}" data-act="unwatch" data-i="${i}">×</button></span>`).join("") || `<span class="small dim">Nothing on the list yet.</span>`}</div>
       </section>
+
+      ${Platform.listApps ? `<section class="card">
+        <h3>Watched apps</h3>
+        <p class="small dim" style="margin:0">Opening one of these starts a pause, just like a watched site.</p>
+        <form class="row mt" data-form="app">
+          <select class="field grow" name="pkg"><option value="">Choose an app…</option>${Platform.listApps().filter((a) => !state.watchApps.some((w) => w.pkg === a.pkg)).map((a) => `<option value="${esc(a.pkg)}">${esc(a.label)}</option>`).join("")}</select>
+          <button class="btn primary">Add</button>
+        </form>
+        <div class="chips">${state.watchApps.map((a, i) => `<span class="chip">${esc(a.label)}<button aria-label="Remove ${esc(a.label)}" data-act="unwatchapp" data-i="${i}">×</button></span>`).join("") || `<span class="small dim">No apps on the list.</span>`}</div>
+      </section>` : ""}
 
       <section class="card">
         <h3>Settings</h3>
@@ -286,7 +307,7 @@
       <div class="pause-head">
         <p class="eyebrow">Pause caught it</p>
         <h2>Hold on. Let's give this a minute — literally.</h2>
-        <p>${ap.hit && !practice ? `You were headed to <b style="color:var(--text)">${esc(C.parseUrl(ap.target).host || ap.hit)}</b>. ` : ""}Nothing here is judging you. Pick something to do with the next few minutes while the urge burns itself out.</p>
+        <p>${ap.hit && !practice ? `You were headed to <b style="color:var(--text)">${esc(targetName(ap))}</b>. ` : ""}Nothing here is judging you. Pick something to do with the next few minutes while the urge burns itself out.</p>
         ${ap.multiplier > 1 ? `<p class="warn mt" style="max-width:24rem;margin-left:auto;margin-right:auto">⚡ This pause is ${ap.multiplier}× longer — you came back within 30 minutes of the last one. Each quick return doubles the timer again, up to 60 minutes.</p>` : ""}
         <div class="ring">
           <svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="52" fill="none" stroke="var(--border)" stroke-width="9"/>
@@ -358,7 +379,7 @@
   function renderDone(ap) {
     view = "done";
     const practice = ap.hit === "Practice run";
-    const host = C.parseUrl(ap.target).host;
+    const host = targetName(ap);
     const confetti = ["#7c6ff0", "#ffb38a", "#5ed3b3", "#f06fa8", "#ffd166"].map((c, i) => `<span class="confetti" style="left:${12 + i * 18}%;background:${c};animation-delay:${i * 80}ms"></span>`).join("");
     $app.innerHTML = `<div class="exited" style="position:relative">${confetti}
       <p style="font-size:52px;margin:0">🌅</p>
@@ -653,8 +674,10 @@
       case "safe": return Platform.openSafe(b.getAttribute("data-url") || C.safeUrl(state.settings.emergencyExitUrl));
       case "home": return Platform.openHome && params.get("mode") === "pause" ? Platform.openHome() : renderHome();
       case "continue": {
-        C.grantPass(state, b.getAttribute("data-hit"));
+        const hit = b.getAttribute("data-hit");
+        C.grantPass(state, hit);
         await persist();
+        if (isApp(hit) && Platform.openApp) return Platform.openApp(hit.slice(4));
         return Platform.continueTo(b.getAttribute("data-target"));
       }
       case "protect": return Platform.openProtection();
@@ -668,6 +691,16 @@
         }
         return;
       }
+      case "unwatchapp": {
+        const i = Number(b.getAttribute("data-i"));
+        const a = state.watchApps[i];
+        if (a && confirm(`Stop watching ${a.label}?`)) {
+          state.watchApps.splice(i, 1);
+          await persist();
+          renderHome();
+        }
+        return;
+      }
       case "exitpreset": {
         await setSetting("emergencyExitUrl", b.getAttribute("data-url"));
         return renderHome();
@@ -676,6 +709,17 @@
   });
 
   document.addEventListener("submit", async (e) => {
+    const fa = e.target.closest('[data-form="app"]');
+    if (fa) {
+      e.preventDefault();
+      const pkg = fa.pkg.value;
+      const app = Platform.listApps ? Platform.listApps().find((a) => a.pkg === pkg) : null;
+      if (app && !state.watchApps.some((w) => w.pkg === pkg)) {
+        state.watchApps.push({ pkg: app.pkg, label: app.label });
+        await persist();
+      }
+      return renderHome();
+    }
     const f = e.target.closest('[data-form="watch"]');
     if (!f) return;
     e.preventDefault();

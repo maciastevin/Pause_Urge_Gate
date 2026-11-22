@@ -49,6 +49,18 @@ object PauseCore {
         return null
     }
 
+    val DEFAULT_WATCH_APPS = setOf("com.twitter.android", "com.reddit.frontpage", "com.tumblr")
+
+    fun watchApps(state: JSONObject?): Set<String> {
+        val arr = state?.optJSONArray("watchApps") ?: return DEFAULT_WATCH_APPS
+        val out = HashSet<String>()
+        for (i in 0 until arr.length()) {
+            val pkg = arr.optJSONObject(i)?.optString("pkg", "") ?: ""
+            if (pkg.isNotBlank()) out.add(pkg)
+        }
+        return out
+    }
+
     fun watchList(state: JSONObject?): List<String> {
         val arr = state?.optJSONArray("watch") ?: return DEFAULT_WATCH
         val out = ArrayList<String>(arr.length())

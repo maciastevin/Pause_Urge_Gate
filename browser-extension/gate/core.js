@@ -20,6 +20,13 @@
     "porn", "xxx", "nsfw", "hentai",
   ];
 
+  // Android only: apps that trigger a pause when opened.
+  const DEFAULT_WATCH_APPS = [
+    { pkg: "com.twitter.android", label: "X" },
+    { pkg: "com.reddit.frontpage", label: "Reddit" },
+    { pkg: "com.tumblr", label: "Tumblr" },
+  ];
+
   function defaults() {
     return {
       v: 1,
@@ -30,6 +37,7 @@
         emergencyExitUrl: "https://www.google.com",
       },
       watch: DEFAULT_WATCH.slice(),
+      watchApps: DEFAULT_WATCH_APPS.map((a) => Object.assign({}, a)),
       sessions: [],
       passes: {},
       activePause: null,
@@ -43,6 +51,7 @@
       v: 1,
       settings: Object.assign({}, d.settings, s.settings || {}),
       watch: Array.isArray(s.watch) ? s.watch.filter(Boolean).map(String) : d.watch,
+      watchApps: Array.isArray(s.watchApps) ? s.watchApps.filter((a) => a && a.pkg) : d.watchApps,
       sessions: Array.isArray(s.sessions) ? s.sessions : [],
       passes: s.passes && typeof s.passes === "object" ? s.passes : {},
       activePause: s.activePause && typeof s.activePause === "object" ? s.activePause : null,
@@ -194,7 +203,7 @@
   }
 
   g.PauseCore = {
-    QUICK_RETURN_MS, MAX_PAUSE_MINUTES, PASS_MS, DEFAULT_WATCH,
+    QUICK_RETURN_MS, MAX_PAUSE_MINUTES, PASS_MS, DEFAULT_WATCH, DEFAULT_WATCH_APPS,
     defaults, normalize, cleanEntry, parseUrl, match, clamp, escalation,
     startPause, finishPause, grantPass, hasPass, stats, safeUrl,
   };
