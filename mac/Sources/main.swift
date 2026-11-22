@@ -108,7 +108,7 @@ enum Core {
 
 func nowMs() -> Double { Date().timeIntervalSince1970 * 1000 }
 
-// MARK: - Browsers (AppleScript)
+// MARK: - Browsers (AppleScript via osascript, off the main thread)
 
 enum Browsers {
     enum Kind { case safari, chromium }
@@ -127,36 +127,57 @@ enum Browsers {
         "org.chromium.Chromium": .chromium,
     ]
 
-    /// Browsers where macOS said "not allowed" (error -1743).
+    /// Browsers where macOS said "not allowed" (error -1743). Main thread only.
     static var denied = Set<String>()
-    private static var cache: [String: NSAppleScript] = [:]
+    private static let queue = DispatchQueue(label: "app.pause.urgegate.osascript")
+    private static var busy = false
 
-    private static func run(_ source: String, bid: String) -> String? {
-        let script: NSAppleScript
-        if let s = cache[source] {
-            script = s
-        } else {
-            guard let s = NSAppleScript(source: source) else { return nil }
-            cache[source] = s
-            script = s
+    /// Runs osascript with a timeout. Never call on the main thread.
+    private static func osascript(_ source: String, timeout: TimeInterval) -> (out: String?, err: String) {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        p.arguments = ["-e", source]
+        let outPipe = Pipe()
+        let errPipe = Pipe()
+        p.standardOutput = outPipe
+        p.standardError = errPipe
+        do { try p.run() } catch { return (nil, "\(error)") }
+        let deadline = Date().addingTimeInterval(timeout)
+        while p.isRunning && Date() < deadline { usleep(50_000) }
+        if p.isRunning {
+            p.terminate()
+            return (nil, "timeout")
         }
-        var err: NSDictionary?
-        let out = script.executeAndReturnError(&err)
-        if let err = err {
-            if (err[NSAppleScript.errorNumber] as? Int) == -1743 { denied.insert(bid) }
-            return nil
-        }
-        denied.remove(bid)
-        return out.stringValue
+        let out = String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let err = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        return (p.terminationStatus == 0 ? out : nil, err)
     }
 
-    static func currentURL(_ bid: String, _ kind: Kind) -> String? {
+    private static func script(_ bid: String, _ body: String) -> String {
+        "tell application id \"\(bid)\"\n\(body)\nend tell"
+    }
+
+    /// Reads the front tab's URL in the background and calls back on the main thread.
+    /// Skips the call if a previous read is still running (e.g. a permission prompt is open).
+    static func readURL(_ bid: String, _ kind: Kind, completion: @escaping (String?) -> Void) {
+        if busy { return }
+        busy = true
         let body: String
         switch kind {
         case .safari: body = "if (count of windows) > 0 then return URL of current tab of front window"
         case .chromium: body = "if (count of windows) > 0 then return URL of active tab of front window"
         }
-        return run("tell application id \"\(bid)\"\n\(body)\nend tell", bid: bid)
+        let src = script(bid, body)
+        queue.async {
+            // Long timeout so a first-time permission prompt can be answered.
+            let r = osascript(src, timeout: 60)
+            DispatchQueue.main.async {
+                busy = false
+                if r.err.contains("-1743") { denied.insert(bid) } else if r.out != nil { denied.remove(bid) }
+                completion(r.out)
+            }
+        }
     }
 
     static func blank(_ bid: String, _ kind: Kind) {
@@ -165,7 +186,8 @@ enum Browsers {
         case .safari: body = "set URL of current tab of front window to \"about:blank\""
         case .chromium: body = "set URL of active tab of front window to \"about:blank\""
         }
-        _ = run("tell application id \"\(bid)\"\n\(body)\nend tell", bid: bid)
+        let src = script(bid, body)
+        queue.async { _ = osascript(src, timeout: 5) }
     }
 }
 
@@ -394,6 +416,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             w.isReleasedWhenClosed = false
             w.backgroundColor = bgColor
             w.minSize = NSSize(width: 380, height: 500)
+            w.collectionBehavior = [.moveToActiveSpace]
             w.center()
             let wv = makeWeb()
             w.contentView = wv
@@ -486,8 +509,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
         guard let front = NSWorkspace.shared.frontmostApplication,
               let bid = front.bundleIdentifier,
-              let kind = Browsers.known[bid],
-              let url = Browsers.currentURL(bid, kind), !url.isEmpty,
+              let kind = Browsers.known[bid]
+        else { return }
+        Browsers.readURL(bid, kind) { [weak self] url in
+            self?.handle(url: url, bid: bid, kind: kind)
+        }
+    }
+
+    func handle(url: String?, bid: String, kind: Browsers.Kind) {
+        let now = nowMs()
+        let st = Store.shared.parsed
+        if Core.activePause(st, now) != nil { return }
+        guard let url = url, !url.isEmpty,
               let hit = Core.match(url, Core.watchList(st))
         else { return }
         if Core.hasPass(st, hit, now) { return }
