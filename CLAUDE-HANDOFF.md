@@ -36,6 +36,11 @@ Design: light, modern, techy, soft painterly gradient spaces.
 
 ## Current state
 
+**Start with `NEXT-STEPS.md`** — real native apps now exist (Mac, Android, browser extension)
+and it lists what's tested, what isn't, and what to do next. The notes below describe the
+original Muse prototype.
+
+
 - Working prototype built in Muse on 2026-11-21, exported here.
 - `client/src/App.tsx` holds most of the UI. Server actions are in
   `server/src/actions.ts`, schema in `server/src/schema.ts`, Drizzle
