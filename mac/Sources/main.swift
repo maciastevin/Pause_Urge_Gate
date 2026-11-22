@@ -160,7 +160,7 @@ enum Browsers {
 
     /// Reads the front tab's URL in the background and calls back on the main thread.
     /// Skips the call if a previous read is still running (e.g. a permission prompt is open).
-    static func readURL(_ bid: String, _ kind: Kind, completion: @escaping (String?) -> Void) {
+    static func readURL(_ bid: String, _ kind: Kind, completion: @escaping (String?, String) -> Void) {
         if busy { return }
         busy = true
         let body: String
@@ -175,7 +175,7 @@ enum Browsers {
             DispatchQueue.main.async {
                 busy = false
                 if r.err.contains("-1743") { denied.insert(bid) } else if r.out != nil { denied.remove(bid) }
-                completion(r.out)
+                completion(r.out, r.err)
             }
         }
     }
@@ -193,9 +193,27 @@ enum Browsers {
 
 // MARK: - Windows
 
-final class KeyWindow: NSWindow {
+final class KeyPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
+}
+
+/// Small diagnostics log: ~/Library/Logs/Pause.log
+enum Log {
+    static let url: URL = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Logs/Pause.log")
+    static func write(_ msg: String) {
+        let line = ISO8601DateFormatter().string(from: Date()) + "  " + msg + "\n"
+        NSLog("Pause: %@", msg)
+        guard let data = line.data(using: .utf8) else { return }
+        if let h = try? FileHandle(forWritingTo: url) {
+            h.seekToEndOfFile()
+            h.write(data)
+            try? h.close()
+        } else {
+            try? data.write(to: url)
+        }
+    }
 }
 
 let bgColor = NSColor(name: nil) { appearance in
@@ -218,16 +236,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     var statusItem: NSStatusItem?
     var homeWindow: NSWindow?
     var homeWeb: WKWebView?
-    var overlay: KeyWindow?
+    var overlay: KeyPanel?
     var overlayWeb: WKWebView?
     var covers: [NSWindow] = []
     var locked = false
     var timer: Timer?
     var lastKey = ""
     var lastAt = 0.0
+    var lastFront = ""
     var loginItem: NSMenuItem?
+    var statusLine: NSMenuItem?
+    var diag = "Starting…" {
+        didSet {
+            if diag != oldValue {
+                statusLine?.title = diag
+                Log.write(diag)
+            }
+        }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let ver = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        Log.write("Launched Pause \(ver) from \(Bundle.main.bundlePath)")
         NSApp.setActivationPolicy(.regular)
         buildMainMenu()
         buildStatusItem()
@@ -298,6 +328,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             b.image = img
         }
         let m = NSMenu()
+        let ver = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        let v = NSMenuItem(title: "Pause \(ver)", action: nil, keyEquivalent: "")
+        v.isEnabled = false
+        m.addItem(v)
+        let line = NSMenuItem(title: diag, action: nil, keyEquivalent: "")
+        line.isEnabled = false
+        statusLine = line
+        m.addItem(line)
+        m.addItem(.separator())
         m.addItem(item("Open Pause", #selector(openHome), ""))
         m.addItem(item("Practice a pause", #selector(practice), ""))
         m.addItem(.separator())
@@ -429,6 +468,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
         NSApp.activate(ignoringOtherApps: true)
         homeWindow?.makeKeyAndOrderFront(nil)
+        homeWindow?.orderFrontRegardless()
+        Log.write("Home window shown")
     }
 
     // MARK: overlay
@@ -436,11 +477,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     func showOverlay(target: String, hit: String) {
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
         if overlay == nil {
-            let w = KeyWindow(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false)
-            w.level = .floating
+            let w = KeyPanel(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            w.isFloatingPanel = true
+            w.hidesOnDeactivate = false
+            w.becomesKeyOnlyIfNeeded = false
+            w.level = .statusBar
             w.isReleasedWhenClosed = false
             w.backgroundColor = bgColor
-            w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
             let wv = makeWeb()
             w.contentView = wv
             overlay = w
@@ -458,22 +502,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         covers.forEach { $0.orderOut(nil) }
         covers = []
         for s in NSScreen.screens where s != screen {
-            let c = NSWindow(contentRect: s.frame, styleMask: [.borderless], backing: .buffered, defer: false)
-            c.level = .floating
+            let c = NSPanel(contentRect: s.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            c.hidesOnDeactivate = false
+            c.level = .statusBar
             c.isReleasedWhenClosed = false
             c.backgroundColor = bgColor
-            c.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            c.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
             c.setFrame(s.frame, display: true)
             covers.append(c)
         }
         homeWindow?.orderOut(nil)
         bringOverlayFront()
+        Log.write("Pause shown for \(hit.isEmpty ? "?" : hit)")
     }
 
     func bringOverlayFront() {
+        overlay?.orderFrontRegardless()
+        overlay?.makeKey()
+        covers.forEach { $0.orderFrontRegardless() }
         NSApp.activate(ignoringOtherApps: true)
-        overlay?.makeKeyAndOrderFront(nil)
-        covers.forEach { $0.orderFront(nil) }
     }
 
     func hideOverlay() {
@@ -499,20 +546,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         if let ap = Core.activePause(st, now) {
             if overlay?.isVisible != true {
                 showOverlay(target: ap["target"] as? String ?? "", hit: ap["hit"] as? String ?? "")
-            } else if locked, let front = NSWorkspace.shared.frontmostApplication,
-                      front.activationPolicy == .regular,
-                      front.bundleIdentifier != Bundle.main.bundleIdentifier {
+            } else if locked, overlay?.isKeyWindow != true || overlay?.isOnActiveSpace != true {
                 bringOverlayFront()
             }
             return
         }
 
-        guard let front = NSWorkspace.shared.frontmostApplication,
-              let bid = front.bundleIdentifier,
-              let kind = Browsers.known[bid]
-        else { return }
-        Browsers.readURL(bid, kind) { [weak self] url in
-            self?.handle(url: url, bid: bid, kind: kind)
+        guard let front = NSWorkspace.shared.frontmostApplication, let bid = front.bundleIdentifier else { return }
+        if bid != lastFront {
+            lastFront = bid
+            Log.write("Front app: \(bid)")
+        }
+        guard let kind = Browsers.known[bid] else { return }
+        let name = front.localizedName ?? bid
+        Browsers.readURL(bid, kind) { [weak self] url, err in
+            guard let self = self else { return }
+            if let url = url {
+                self.diag = "\(name): watching ✓"
+                _ = url
+            } else if err.contains("-1743") {
+                self.diag = "\(name): not allowed — turn on in Settings › Automation"
+            } else if err == "timeout" {
+                self.diag = "\(name): waiting for permission…"
+            } else if !err.isEmpty {
+                self.diag = "\(name): error \(err.prefix(80))"
+            }
+            self.handle(url: url, bid: bid, kind: kind)
         }
     }
 
@@ -578,6 +637,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             NSWorkspace.shared.open(u)
             decisionHandler(.cancel)
         }
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        Log.write("Page loaded in \(webView === overlayWeb ? "pause" : "home") window")
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        Log.write("Page failed: \(error.localizedDescription)")
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        Log.write("Page failed to start: \(error.localizedDescription)")
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        Log.write("Web content process crashed; reloading")
+        webView.reload()
     }
 
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
