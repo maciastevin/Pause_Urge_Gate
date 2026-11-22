@@ -1,0 +1,92 @@
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&display=swap');
+@import "tailwindcss";
+@import "tailwindcss-safe-area";
+
+@theme {
+  --text-xs: 12px;
+  --text-xs--line-height: 16px;
+  --text-sm: 14px;
+  --text-sm--line-height: 20px;
+  --text-base: 16px;
+  --text-base--line-height: 24px;
+  --text-lg: 18px;
+  --text-lg--line-height: 28px;
+  --text-xl: 20px;
+  --text-xl--line-height: 28px;
+  --text-2xl: 24px;
+  --text-2xl--line-height: 32px;
+  --text-3xl: 30px;
+  --text-3xl--line-height: 36px;
+  --text-4xl: 36px;
+  --text-4xl--line-height: 40px;
+  --text-5xl: 48px;
+  --text-5xl--line-height: 52px;
+  --font-sans: "Sora", system-ui, sans-serif;
+}
+
+:root {
+  color-scheme: light;
+  --bg: #f7f6fc;
+  --surface: #ffffff;
+  --surface2: #efecfa;
+  --text: #221d33;
+  --dim: #8a84a3;
+  --border: #e9e6f5;
+  --accent: #7c6ff0;
+  --accent2: #ffb38a;
+  --mint: #2fbfa0;
+  --radius: 20px;
+  --space-surface: var(--surface);
+  --space-surface-alt: var(--surface2);
+  --space-muted: var(--dim);
+  --space-border: var(--border);
+  --space-accent: var(--accent);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #17142a;
+    --surface: #221e3a;
+    --surface2: #2b2650;
+    --text: #f2f0fb;
+    --dim: #a49ec4;
+    --border: #37316b;
+    --accent: #9d90ff;
+    --accent2: #ffb38a;
+    --mint: #5ed3b3;
+  }
+}
+
+@layer base {
+  button, [role="button"], select, summary, input:not([type="checkbox"], [type="radio"]) {
+    min-height: 2.25rem;
+  }
+  body { font-family: var(--font-sans); }
+}
+
+@keyframes breathePulse {
+  0%, 100% { transform: scale(0.72); opacity: 0.75; }
+  42% { transform: scale(1.12); opacity: 1; }
+  58% { transform: scale(1.12); opacity: 1; }
+}
+@keyframes drift {
+  0% { transform: translate(0,0) rotate(0deg) scale(1); }
+  50% { transform: translate(18px,-14px) rotate(4deg) scale(1.06); }
+  100% { transform: translate(0,0) rotate(0deg) scale(1); }
+}
+@keyframes floaty {
+  0%,100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+@keyframes popIn {
+  from { transform: scale(0.92); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+@keyframes confettiFall {
+  0% { transform: translateY(-10px) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(120px) rotate(320deg); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
