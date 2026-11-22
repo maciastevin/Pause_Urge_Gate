@@ -191,6 +191,38 @@ enum Browsers {
     }
 }
 
+// MARK: - Serves the gate files from the app bundle as pause://app/...
+
+final class GateSchemeHandler: NSObject, WKURLSchemeHandler {
+    static let scheme = "pause"
+    let root: URL
+
+    init(root: URL) {
+        self.root = root.standardizedFileURL
+    }
+
+    func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
+        guard let url = task.request.url else { return }
+        var rel = url.path
+        if rel.isEmpty || rel == "/" { rel = "/index.html" }
+        let file = root.appendingPathComponent(String(rel.dropFirst())).standardizedFileURL
+        guard file.path.hasPrefix(root.path), let data = try? Data(contentsOf: file) else {
+            task.didFailWithError(NSError(domain: NSURLErrorDomain, code: NSURLErrorFileDoesNotExist))
+            return
+        }
+        let types = ["html": "text/html", "js": "text/javascript", "css": "text/css", "svg": "image/svg+xml", "png": "image/png", "json": "application/json"]
+        let mime = types[file.pathExtension.lowercased()] ?? "application/octet-stream"
+        let headers = ["Content-Type": mime + "; charset=utf-8", "Content-Length": String(data.count), "Cache-Control": "no-cache"]
+        if let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: headers) {
+            task.didReceive(resp)
+        }
+        task.didReceive(data)
+        task.didFinish()
+    }
+
+    func webView(_ webView: WKWebView, stop task: WKURLSchemeTask) {}
+}
+
 // MARK: - Windows
 
 final class KeyPanel: NSPanel {
@@ -390,6 +422,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     func makeWeb() -> WKWebView {
         let cfg = WKWebViewConfiguration()
         cfg.userContentController.add(self, name: "pause")
+        if let root = Bundle.main.resourceURL?.appendingPathComponent("gate", isDirectory: true) {
+            cfg.setURLSchemeHandler(GateSchemeHandler(root: root), forURLScheme: GateSchemeHandler.scheme)
+        }
         let wv = WKWebView(frame: .zero, configuration: cfg)
         wv.navigationDelegate = self
         wv.uiDelegate = self
@@ -426,11 +461,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         let uc = wv.configuration.userContentController
         uc.removeAllUserScripts()
         uc.addUserScript(WKUserScript(source: bridgeScript(), injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        guard let dir = Bundle.main.resourceURL?.appendingPathComponent("gate", isDirectory: true),
-              var comps = URLComponents(url: dir.appendingPathComponent("index.html"), resolvingAgainstBaseURL: false)
-        else { return }
-        if !query.isEmpty { comps.percentEncodedQuery = query }
-        if let u = comps.url { wv.loadFileURL(u, allowingReadAccessTo: dir) }
+        let address = "\(GateSchemeHandler.scheme)://app/index.html" + (query.isEmpty ? "" : "?" + query)
+        guard let u = URL(string: address) else {
+            Log.write("Bad gate address: \(address)")
+            return
+        }
+        wv.load(URLRequest(url: u))
     }
 
     func broadcast(except: WKWebView?) {
@@ -632,7 +668,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let u = navigationAction.request.url else { return decisionHandler(.allow) }
-        if u.isFileURL || u.scheme == "about" {
+        if u.scheme == GateSchemeHandler.scheme || u.scheme == "about" {
             decisionHandler(.allow)
         } else {
             NSWorkspace.shared.open(u)
