@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Pause</string>
+    <string name="a11y_description">Pause reads your web browser\'s address bar so it can step in with a short pause when you head to a site on your watch list. During a pause it brings the pause screen back if you switch apps. Nothing is sent anywhere — it all stays on this phone.</string>
+</resources>
