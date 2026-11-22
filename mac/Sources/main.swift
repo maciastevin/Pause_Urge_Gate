@@ -261,9 +261,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         NSApp.setActivationPolicy(.regular)
         buildMainMenu()
         buildStatusItem()
+        timer = Timer.scheduledTimer(timeInterval: 1.0, target: self, selector: #selector(tick), userInfo: nil, repeats: true)
+        Log.write("Watcher started")
         firstLaunchSetup()
         showHome()
-        timer = Timer.scheduledTimer(timeInterval: 1.0, target: self, selector: #selector(tick), userInfo: nil, repeats: true)
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -392,7 +393,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         let wv = WKWebView(frame: .zero, configuration: cfg)
         wv.navigationDelegate = self
         wv.uiDelegate = self
-        wv.setValue(false, forKey: "drawsBackground")
+        if #available(macOS 12.0, *) { wv.underPageBackgroundColor = bgColor }
         return wv
     }
 
