@@ -10,11 +10,13 @@
   const Platform = (function () {
     const N = window.PauseNative;
     if (N) {
+      const kind = N.platform ? String(N.platform()) : "android";
+      const mac = kind === "mac";
       return {
-        kind: "android",
+        kind: kind,
         load: async () => { try { return JSON.parse(N.load() || "null"); } catch (e) { return null; } },
         save: async (s) => N.save(JSON.stringify(s)),
-        openSafe: (url) => N.openUrl(url),
+        openSafe: (url) => { N.openUrl(url); if (mac) N.close(); },
         emergency: (url) => N.openUrl(url),
         continueTo: (url) => { N.openUrl(/^https?:/i.test(url) ? url : "https://" + url); N.close(); },
         close: () => N.close(),
@@ -22,6 +24,9 @@
         protectionOn: () => !!N.isProtectionOn(),
         openProtection: () => N.openProtectionSettings(),
         nativeListen: N.canListen && N.canListen() ? () => N.listen() : null,
+        practice: mac && N.practice ? () => N.practice() : null,
+        openHome: mac && N.openHome ? () => N.openHome() : null,
+        onChange: mac ? (fn) => { window.__pauseOnChange = fn; } : null,
       };
     }
     const ch = typeof chrome !== "undefined" ? chrome : null;
@@ -116,16 +121,16 @@
     if (!loaded) await persist();
     if (params.get("mode") === "pause") {
       await beginPause(params.get("target") || "", params.get("hit") || "");
-    } else if (state.activePause && state.activePause.endsAt > Date.now()) {
+    } else if (Platform.kind !== "mac" && state.activePause && state.activePause.endsAt > Date.now()) {
       // A pause is still running — you don't get to skip it by opening home.
       await beginPause(state.activePause.target, state.activePause.hit);
     } else {
       renderHome();
     }
     if (Platform.onChange) Platform.onChange(async () => {
-      if (view !== "home") return;
+      if (view === "pause") return;
       state = C.normalize(await Platform.load());
-      renderHome();
+      if (view === "home") renderHome();
     });
     document.addEventListener("visibilitychange", () => { if (!document.hidden && view === "home") renderHome(); });
   }
@@ -145,6 +150,11 @@
       protection = on
         ? `<div class="status"><span class="dot"></span><div><b>Protection is on</b><p class="small dim" style="margin:2px 0 0">Pause is watching Chrome, Samsung Internet, Firefox, Brave, Edge, Opera and DuckDuckGo for your watch list.</p></div></div>`
         : `<div class="status off"><span class="dot"></span><div class="grow"><b>Protection is off</b><p class="small dim" style="margin:2px 0 8px">Turn on Pause in Accessibility settings so it can catch watched sites in your browser. Pause only reads the address bar; nothing leaves your phone.</p><button class="btn primary sm" data-act="protect">Turn on protection</button></div></div>`;
+    } else if (Platform.kind === "mac") {
+      const on = Platform.protectionOn();
+      protection = on
+        ? `<div class="status"><span class="dot"></span><div><b>Pause is watching your browsers</b><p class="small dim" style="margin:2px 0 0">Safari, Chrome, Arc, Brave, Edge, Vivaldi and Opera. The first time you use each one, macOS asks to let Pause control it — click <b>Allow</b>. Pause lives in your menu bar.</p></div></div>`
+        : `<div class="status off"><span class="dot"></span><div class="grow"><b>A browser blocked Pause</b><p class="small dim" style="margin:2px 0 8px">Open Automation settings, find Pause, and switch on each browser.</p><button class="btn primary sm" data-act="protect">Open Automation settings</button></div></div>`;
     } else if (Platform.kind === "extension") {
       protection = `<div class="status"><span class="dot"></span><div><b>Watching this browser</b><p class="small dim" style="margin:2px 0 0">Watched sites open the pause instead. To cover private windows, turn on “Allow in Incognito” for Pause in your extensions page.</p></div></div>`;
     } else {
@@ -633,7 +643,7 @@
     if (!b || b.disabled) return;
     const act = b.getAttribute("data-act");
     switch (act) {
-      case "practice": return beginPause("", "Practice run");
+      case "practice": return Platform.practice ? Platform.practice() : beginPause("", "Practice run");
       case "path": ui.path = b.getAttribute("data-p"); return renderPathZone();
       case "allpaths": stopActivity(); ui.path = null; return renderPathZone();
       case "pathdone": return markDone(b.getAttribute("data-p"));
@@ -641,7 +651,7 @@
       case "emergency": return emergencyExit();
       case "emergency-home": return emergencyExit();
       case "safe": return Platform.openSafe(b.getAttribute("data-url") || C.safeUrl(state.settings.emergencyExitUrl));
-      case "home": return renderHome();
+      case "home": return Platform.openHome && params.get("mode") === "pause" ? Platform.openHome() : renderHome();
       case "continue": {
         C.grantPass(state, b.getAttribute("data-hit"));
         await persist();

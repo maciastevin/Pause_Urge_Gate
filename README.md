@@ -10,11 +10,20 @@ through the urge: Breathe, Affirmation, Challenge, and Funny Cats.
 | --- | --- |
 | `browser-extension/` | **Mac (and any desktop):** Chrome / Edge / Brave / Arc extension. Watched sites open the pause instead. |
 | `browser-extension/gate/` | The pause UI itself (plain HTML/CSS/JS, no build step). Shared by the extension and the Android app. |
+| `mac/` | **Native Mac app:** menu-bar app that watches Safari, Chrome, Arc, Brave, Edge, Vivaldi and Opera, and covers the whole screen during a pause. `mac/build.sh` builds it. |
 | `android/` | **Android app:** Kotlin. An Accessibility service reads the browser's address bar and opens the pause over it. |
 | `.github/workflows/build.yml` | Builds `Pause.apk` + the extension zip on every push and publishes them as a GitHub release. |
 | `client/`, `server/`, `drizzle/` | The original Muse prototype, kept for reference. |
 
 ## Run it tonight
+
+### Mac — native app
+1. Download `Pause-mac.zip` from the latest GitHub release, unzip, drag **Pause** into Applications.
+2. First open: right-click Pause → **Open** (on macOS 15: System Settings → Privacy & Security → **Open Anyway**). The app isn't notarized yet.
+3. When macOS asks to let Pause control Safari / Chrome, click **Allow**.
+4. Pause sits in the menu bar and starts at login. During a pause the screen is covered,
+   the Dock and app switching are disabled, and Quit is blocked until the timer ends
+   (Emergency Exit always works).
 
 ### Mac — browser extension (2 minutes)
 1. Open `chrome://extensions` (Edge: `edge://extensions`, Brave: `brave://extensions`).
@@ -58,7 +67,8 @@ Or build locally: open the `android/` folder in Android Studio, plug in your pho
 ## Not yet covered
 - iPhone / iPad (needs Screen Time / FamilyControls — Apple entitlement + Xcode).
 - Apps (Reddit, X) on Android are only blocked during a running pause, not by URL.
-- System-wide Mac blocking outside the browser (needs a Network Extension).
+- Firefox on Mac (no AppleScript access to its address bar) — use the extension there.
+- The Mac app, extension and phone each keep their own stats and fall timer.
 
 ---
 
