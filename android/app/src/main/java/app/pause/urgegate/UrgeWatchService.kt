@@ -55,6 +55,7 @@ class UrgeWatchService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        instance = this
         reload()
         PauseStore.prefs(this).registerOnSharedPreferenceChangeListener(prefsListener)
         launchers = try {
@@ -68,6 +69,7 @@ class UrgeWatchService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        if (instance === this) instance = null
         hideBlocker()
         PauseStore.prefs(this).unregisterOnSharedPreferenceChangeListener(prefsListener)
         super.onDestroy()
@@ -125,13 +127,20 @@ class UrgeWatchService : AccessibilityService() {
             return
         }
 
-        // 3) Watch browsers' address bars.
+        // 3) Search boxes in any app (Google, X, YouTube, app search bars...).
+        if (e.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) {
+            checkSearchBox(e, pkg, now)
+            return
+        }
+
+        // 4) Watch browsers' address bars.
         val ids = BROWSER_URL_IDS[pkg] ?: return
         val root = rootInActiveWindow ?: return
         val text = readUrl(root, ids)?.trim() ?: return
-        if (text.isEmpty() || text.contains(' ')) return
+        if (text.isEmpty()) return
 
-        val hit = PauseCore.match(text, PauseCore.watchList(state)) ?: return
+        val watch = PauseCore.watchList(state)
+        val hit = (if (text.contains(' ')) PauseCore.matchText(text, watch) else PauseCore.matchAll(text, watch)) ?: return
         if (PauseCore.hasPass(state, hit, now)) return
 
         val key = "$pkg|$text"
@@ -141,6 +150,34 @@ class UrgeWatchService : AccessibilityService() {
 
         performGlobalAction(GLOBAL_ACTION_BACK)
         launchGate(text, hit)
+    }
+
+    private fun checkSearchBox(e: AccessibilityEvent, pkg: String, now: Long) {
+        val node = e.source
+        val typed = e.text?.joinToString(" ")?.trim().orEmpty()
+        if (typed.length < 3) return
+        val vid = node?.viewIdResourceName
+        val isAddressBar = vid != null && BROWSER_URL_IDS[pkg]?.contains(vid) == true
+        if (!isAddressBar && !looksLikeSearchBox(node, e)) return
+        val hit = PauseCore.matchText(typed, PauseCore.watchList(state)) ?: return
+        if (PauseCore.hasPass(state, hit, now)) return
+        val key = "search|$pkg|$hit"
+        if (key == lastKey && now - lastAt < 4000) return
+        lastKey = key
+        lastAt = now
+        performGlobalAction(GLOBAL_ACTION_BACK)
+        launchGate("", hit)
+    }
+
+    /** A text field that's for searching or typing an address (not a chat box). */
+    private fun looksLikeSearchBox(node: AccessibilityNodeInfo?, e: AccessibilityEvent): Boolean {
+        val cls = (node?.className ?: e.className)?.toString()?.lowercase() ?: ""
+        if (cls.contains("searchview") || cls.contains("searchbox")) return true
+        val id = node?.viewIdResourceName?.lowercase() ?: ""
+        val hint = node?.hintText?.toString()?.lowercase() ?: ""
+        val desc = node?.contentDescription?.toString()?.lowercase() ?: ""
+        val words = listOf("search", "query", "omnibox", "url", "address", "find", "explore")
+        return words.any { id.contains(it) || hint.contains(it) || desc.contains(it) }
     }
 
     private fun readUrl(root: AccessibilityNodeInfo, ids: List<String>): String? {
@@ -171,6 +208,14 @@ class UrgeWatchService : AccessibilityService() {
         }
         return null
     }
+
+    /** Called by the pause screen the moment it loses the foreground mid-pause. */
+    fun coverNow() {
+        val active = state?.optJSONObject("activePause") ?: return
+        if (active.optDouble("endsAt", 0.0) > System.currentTimeMillis().toDouble()) showBlocker()
+    }
+
+    fun uncover() = hideBlocker()
 
     /** Full-screen cover drawn above every app while a pause runs. */
     private fun showBlocker() {
@@ -257,6 +302,9 @@ class UrgeWatchService : AccessibilityService() {
     }
 
     companion object {
+        @Volatile
+        var instance: UrgeWatchService? = null
+
         private fun chromium(pkg: String) = pkg to listOf("$pkg:id/url_bar")
 
         val BROWSER_URL_IDS: Map<String, List<String>> = mapOf(

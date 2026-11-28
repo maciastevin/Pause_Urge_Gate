@@ -88,6 +88,56 @@ enum Core {
         return nil
     }
 
+    static let searchParams: Set<String> = ["q", "query", "search_query", "search", "p", "text", "k", "wd", "term", "keywords", "kw"]
+    static let recoveryWords: Set<String> = [
+        "quit", "quitting", "stop", "stopping", "addiction", "addicted", "addict", "recovery", "recover",
+        "overcome", "nofap", "sober", "sobriety", "therapy", "therapist", "blocker", "support", "relapse",
+    ]
+
+    static func words(_ s: String) -> [String] {
+        s.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
+    }
+
+    static func searchTerms(_ url: String) -> String {
+        guard let qi = url.firstIndex(of: "?") else { return "" }
+        var query = String(url[url.index(after: qi)...])
+        if let h = query.firstIndex(of: "#") { query = String(query[..<h]) }
+        var out: [String] = []
+        for pair in query.split(separator: "&") {
+            guard let eq = pair.firstIndex(of: "=") else { continue }
+            let key = pair[..<eq].lowercased()
+            if !searchParams.contains(key) { continue }
+            let raw = String(pair[pair.index(after: eq)...]).replacingOccurrences(of: "+", with: " ")
+            let v = raw.removingPercentEncoding ?? raw
+            if !v.trimmingCharacters(in: .whitespaces).isEmpty { out.append(v) }
+        }
+        return out.joined(separator: " ")
+    }
+
+    /// Free text (a search) against the watch list. See matchText in core.js.
+    static func matchText(_ text: String, _ watch: [String]) -> String? {
+        let t = text.lowercased()
+        if t.trimmingCharacters(in: .whitespaces).isEmpty { return nil }
+        let ws = words(t)
+        if ws.contains(where: { recoveryWords.contains($0) }) { return nil }
+        let squashed = ws.joined()
+        for raw in watch {
+            let e = clean(raw)
+            if e.isEmpty { continue }
+            if !e.contains("/") && !e.contains(".") {
+                if t.contains(e) { return e }
+            } else {
+                let name = String(e.split(separator: "/").first?.split(separator: ".").first ?? "")
+                if name.count >= 4 && squashed.contains(name) { return e }
+            }
+        }
+        return nil
+    }
+
+    static func matchAll(_ url: String, _ watch: [String]) -> String? {
+        match(url, watch) ?? matchText(searchTerms(url), watch)
+    }
+
     static func watchList(_ st: [String: Any]?) -> [String] {
         guard let arr = st?["watch"] as? [Any] else { return defaultWatch }
         return arr.compactMap { $0 as? String }
@@ -617,7 +667,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         let st = Store.shared.parsed
         if Core.activePause(st, now) != nil { return }
         guard let url = url, !url.isEmpty,
-              let hit = Core.match(url, Core.watchList(st))
+              let hit = Core.matchAll(url, Core.watchList(st))
         else { return }
         if Core.hasPass(st, hit, now) { return }
 

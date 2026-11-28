@@ -38,8 +38,36 @@ abstract class WebActivity : ComponentActivity() {
     private var recognizer: SpeechRecognizer? = null
     private var pendingListen = false
 
+    /** True while a system permission dialog is up, so the pause cover stays out of its way. */
+    @Volatile
+    var requestingPermission = false
+
+    /** Strict lock: pin the pause screen (Android screen pinning) while the timer runs. */
+    private fun strictLockEnabled(): Boolean =
+        PauseStore.parsed(this)?.optJSONObject("settings")?.optBoolean("strictLock", false) == true
+
+    fun applyLock(value: Boolean) {
+        locked = value
+        try {
+            if (value && strictLockEnabled()) startLockTask() else if (!value) stopLockTask()
+        } catch (e: Exception) {
+            // pinning unavailable or not active
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (locked && !requestingPermission && !isFinishing) UrgeWatchService.instance?.coverNow()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        UrgeWatchService.instance?.uncover()
+    }
+
     private val micPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            requestingPermission = false
             if (granted && pendingListen) {
                 startListening()
             } else if (!granted) {
@@ -88,7 +116,7 @@ abstract class WebActivity : ComponentActivity() {
                         req.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE))
                     } else {
                         req.deny()
-                        if (!hasMic()) micPermission.launch(Manifest.permission.RECORD_AUDIO)
+                        if (!hasMic()) requestMic()
                     }
                 }
             }
@@ -125,6 +153,11 @@ abstract class WebActivity : ComponentActivity() {
         runOnUiThread { if (::web.isInitialized) web.evaluateJavascript(code, null) }
     }
 
+    fun requestMic() {
+        requestingPermission = true
+        micPermission.launch(Manifest.permission.RECORD_AUDIO)
+    }
+
     fun hasMic(): Boolean =
         ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
@@ -147,7 +180,7 @@ abstract class WebActivity : ComponentActivity() {
     fun startListening() {
         if (!hasMic()) {
             pendingListen = true
-            micPermission.launch(Manifest.permission.RECORD_AUDIO)
+            requestMic()
             return
         }
         recognizer?.destroy()
@@ -213,6 +246,18 @@ abstract class WebActivity : ComponentActivity() {
         @JavascriptInterface
         fun setLocked(value: Boolean) {
             locked = value
+            runOnUiThread { applyLock(value) }
+        }
+
+        @JavascriptInterface
+        fun openPinningSettings() {
+            runOnUiThread {
+                try {
+                    startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))
+                } catch (e: Exception) {
+                    startActivity(Intent(Settings.ACTION_SETTINGS))
+                }
+            }
         }
 
         @JavascriptInterface

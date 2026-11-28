@@ -22,7 +22,7 @@ async function check(details) {
   const url = details.url || "";
   if (!/^https?:/i.test(url)) return;
   const state = await getState();
-  const hit = PauseCore.match(url, state.watch);
+  const hit = PauseCore.matchAll(url, state.watch);
   if (!hit) return;
   const pausing = state.activePause && state.activePause.endsAt > Date.now();
   if (!pausing && PauseCore.hasPass(state, hit)) return;

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Pause — Urge Gate",
   "short_name": "Pause",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "When you head to a site on your watch list, Pause steps in for a few minutes so the urge can pass.",
   "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
   "action": { "default_title": "Pause", "default_icon": { "16": "icons/icon16.png", "48": "icons/icon48.png" } },

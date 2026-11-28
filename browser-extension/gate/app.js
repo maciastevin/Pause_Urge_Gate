@@ -29,6 +29,7 @@
         onChange: mac ? (fn) => { window.__pauseOnChange = fn; } : null,
         listApps: N.listApps ? () => { try { return JSON.parse(N.listApps() || "[]"); } catch (e) { return []; } } : null,
         openApp: N.openApp ? (pkg) => { N.openApp(pkg); N.close(); } : null,
+        openPinning: N.openPinningSettings ? () => N.openPinningSettings() : null,
       };
     }
     const ch = typeof chrome !== "undefined" ? chrome : null;
@@ -194,7 +195,7 @@
 
       <section class="card">
         <h3>Watch list</h3>
-        <p class="small dim" style="margin:0">Sites (<i>site.com</i>) block that site. Single words (<i>nsfw</i>) block any address containing them — searches aren't blocked.</p>
+        <p class="small dim" style="margin:0">Sites (<i>site.com</i>) block that site. Single words (<i>nsfw</i>) block any address or search containing them. Searches about quitting or recovery are never blocked.</p>
         <form class="row mt" data-form="watch">
           <input class="field grow" name="entry" placeholder="Add a site or keyword…" autocomplete="off" autocapitalize="off" />
           <button class="btn primary">Add</button>
@@ -222,6 +223,11 @@
           <label class="toggle"><span><b style="font-size:14px">Fall timer</b><br><span class="small dim">Coming back within 30 min doubles the next pause (5 → 10 → 20, max 60).</span></span>
           <input type="checkbox" ${s.escalationEnabled ? "checked" : ""} data-set="escalationEnabled" /></label>
         </div>
+        ${Platform.openPinning ? `<div class="setting">
+          <label class="toggle"><span><b style="font-size:14px">Strict lock</b><br><span class="small dim">Pins the pause so Back, Home and Recent apps do nothing until the timer ends. Turn on <b>App pinning</b> in your phone's security settings first.</span></span>
+          <input type="checkbox" ${s.strictLock ? "checked" : ""} data-set="strictLock" /></label>
+          <button class="btn sm mt" data-act="pinning">Open security settings</button>
+        </div>` : ""}
         <div class="setting">
           <label for="ca">Your own affirmation</label>
           <textarea id="ca" class="field" maxlength="300" placeholder="Write something you'd want to hear in the moment…" data-set="customAffirmation">${esc(s.customAffirmation)}</textarea>
@@ -307,7 +313,7 @@
       <div class="pause-head">
         <p class="eyebrow">Pause caught it</p>
         <h2>Hold on. Let's give this a minute — literally.</h2>
-        <p>${ap.hit && !practice ? `You were headed to <b style="color:var(--text)">${esc(targetName(ap))}</b>. ` : ""}Nothing here is judging you. Pick something to do with the next few minutes while the urge burns itself out.</p>
+        <p>${practice ? "" : (ap.target && !C.match(ap.target, state.watch) && C.searchTerms(ap.target)) ? "Pause caught a search for something on your watch list. " : isApp(ap.hit) ? `You were opening <b style="color:var(--text)">${esc(targetName(ap))}</b>. ` : ap.target ? `You were headed to <b style="color:var(--text)">${esc(targetName(ap))}</b>. ` : ap.hit ? "Pause caught a search for something on your watch list. " : ""}Nothing here is judging you. Pick something to do with the next few minutes while the urge burns itself out.</p>
         ${ap.multiplier > 1 ? `<p class="warn mt" style="max-width:24rem;margin-left:auto;margin-right:auto">⚡ This pause is ${ap.multiplier}× longer — you came back within 30 minutes of the last one. Each quick return doubles the timer again, up to 60 minutes.</p>` : ""}
         <div class="ring">
           <svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="52" fill="none" stroke="var(--border)" stroke-width="9"/>
@@ -681,6 +687,7 @@
         return Platform.continueTo(b.getAttribute("data-target"));
       }
       case "protect": return Platform.openProtection();
+      case "pinning": return Platform.openPinning && Platform.openPinning();
       case "unwatch": {
         const i = Number(b.getAttribute("data-i"));
         const w = state.watch[i];
@@ -740,7 +747,7 @@
     if (!k) return;
     const v = e.target.type === "checkbox" ? e.target.checked : e.target.value;
     await setSetting(k, v);
-    if (k === "pauseMinutes" || k === "escalationEnabled") renderHome();
+    if (k === "pauseMinutes" || k === "escalationEnabled" || k === "strictLock") renderHome();
   });
 
   // Android back button / system calls

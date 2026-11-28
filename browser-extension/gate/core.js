@@ -35,6 +35,7 @@
         customAffirmation: "",
         escalationEnabled: true,
         emergencyExitUrl: "https://www.google.com",
+        strictLock: false,
       },
       watch: DEFAULT_WATCH.slice(),
       watchApps: DEFAULT_WATCH_APPS.map((a) => Object.assign({}, a)),
@@ -99,6 +100,64 @@
       }
     }
     return null;
+  }
+
+  // Query-string keys that hold what someone typed into a search box.
+  const SEARCH_PARAMS = ["q", "query", "search_query", "search", "p", "text", "k", "wd", "term", "keywords", "kw"];
+  // Searches about getting help are never blocked.
+  const RECOVERY_WORDS = [
+    "quit", "quitting", "stop", "stopping", "addiction", "addicted", "addict", "recovery", "recover",
+    "overcome", "nofap", "sober", "sobriety", "therapy", "therapist", "blocker", "support", "relapse",
+  ];
+
+  function isRecovery(text) {
+    const words = String(text || "").toLowerCase().split(/[^a-z0-9]+/);
+    return words.some((w) => RECOVERY_WORDS.indexOf(w) >= 0);
+  }
+
+  /** The search terms in a URL's query string, or "" if none. */
+  function searchTerms(url) {
+    const s = String(url || "");
+    const qi = s.indexOf("?");
+    if (qi < 0) return "";
+    const out = [];
+    s.slice(qi + 1).split("#")[0].split("&").forEach((pair) => {
+      const eq = pair.indexOf("=");
+      if (eq < 0) return;
+      const key = pair.slice(0, eq).toLowerCase();
+      if (SEARCH_PARAMS.indexOf(key) < 0) return;
+      let v = pair.slice(eq + 1).replace(/\+/g, " ");
+      try { v = decodeURIComponent(v); } catch (e) { /* keep raw */ }
+      if (v.trim()) out.push(v);
+    });
+    return out.join(" ");
+  }
+
+  /**
+   * Matches free text (a search, a typed query) against the watch list:
+   * keywords anywhere, and site names without their ending ("pornhub" for
+   * pornhub.com). Searches about recovery are let through.
+   */
+  function matchText(text, watch) {
+    const t = String(text || "").toLowerCase();
+    if (!t.trim() || isRecovery(t)) return null;
+    const squashed = t.replace(/[^a-z0-9]+/g, "");
+    for (const raw of watch || []) {
+      const e = cleanEntry(raw);
+      if (!e) continue;
+      if (e.indexOf("/") < 0 && e.indexOf(".") < 0) {
+        if (t.indexOf(e) >= 0) return e;
+      } else {
+        const name = e.split("/")[0].split(".")[0];
+        if (name.length >= 4 && squashed.indexOf(name) >= 0) return e;
+      }
+    }
+    return null;
+  }
+
+  /** match() for the address, then for any search terms in it. */
+  function matchAll(url, watch) {
+    return match(url, watch) || matchText(searchTerms(url), watch);
   }
 
   function clamp(n, lo, hi) {
@@ -204,7 +263,7 @@
 
   g.PauseCore = {
     QUICK_RETURN_MS, MAX_PAUSE_MINUTES, PASS_MS, DEFAULT_WATCH, DEFAULT_WATCH_APPS,
-    defaults, normalize, cleanEntry, parseUrl, match, clamp, escalation,
+    defaults, normalize, cleanEntry, parseUrl, match, matchText, matchAll, searchTerms, isRecovery, clamp, escalation,
     startPause, finishPause, grantPass, hasPass, stats, safeUrl,
   };
 })(typeof globalThis !== "undefined" ? globalThis : this);
